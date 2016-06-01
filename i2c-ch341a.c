@@ -23,7 +23,7 @@
 #include <linux/i2c.h>
 #include <linux/string.h>
 
-#define TIMEOUT 500
+#define TIMEOUT 1000
 
 #define CH341A_CONTROL_I2C        0xAA
 
@@ -43,6 +43,7 @@ struct i2c_ch341a {
 	struct usb_interface *interface;
 	struct i2c_adapter adapter;
 	int ep_in, ep_out;
+	u8 in_buf[CH341A_I2C_CMD_MAX_LENGTH] ____cacheline_aligned;
 };
 
 static int i2c_ch341a_usb_i2c_command(struct i2c_adapter *adapter, u8 *cmd, u8 len)
@@ -50,12 +51,10 @@ static int i2c_ch341a_usb_i2c_command(struct i2c_adapter *adapter, u8 *cmd, u8 l
 	struct i2c_ch341a *dev = (struct i2c_ch341a *)adapter->algo_data;
 	int sent, ret;
 
-	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, cmd, len);
-
 	ret = usb_bulk_msg(dev->usb_dev,
 		usb_sndbulkpipe(dev->usb_dev, dev->ep_out),
 		cmd, len, &sent, TIMEOUT);
-	if (ret) return ret;
+	if (ret != 0) return ret;
 
 	return 0;
 }
@@ -76,92 +75,89 @@ static int i2c_ch341a_usb_i2c_write(struct i2c_adapter *adapter, u8 data)
 {
 	struct i2c_ch341a *dev = (struct i2c_ch341a *)adapter->algo_data;
 	u8 I2C_CMD_WRITE_BYTE[] = {CH341A_CONTROL_I2C, CH341A_I2C_CMD_OUT, 0, CH341A_I2C_CMD_END};
-	u8 resp[CH341A_I2C_CMD_MAX_LENGTH];
 	int ret, actual;
 
 	I2C_CMD_WRITE_BYTE[2] = data;
 
-	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, I2C_CMD_WRITE_BYTE, sizeof(I2C_CMD_WRITE_BYTE));
-
 	ret = usb_bulk_msg(dev->usb_dev, 
 			usb_sndbulkpipe(dev->usb_dev, dev->ep_out),
 			I2C_CMD_WRITE_BYTE, sizeof(I2C_CMD_WRITE_BYTE), &actual, TIMEOUT);
-	if (ret) return ret;
+	if (ret != 0) return ret;
 
 	ret = usb_bulk_msg(dev->usb_dev, 
 			usb_rcvbulkpipe(dev->usb_dev, dev->ep_in),
-			&resp, CH341A_I2C_CMD_MAX_LENGTH, &actual, TIMEOUT);
-	if (ret) return ret;
+			dev->in_buf, CH341A_I2C_CMD_MAX_LENGTH, &actual, TIMEOUT);
+	if (ret != 0) return ret;
 
-	if (resp[0] & 0x80) return -EPROTO;
+	if (dev->in_buf[0] & 0x80) return -EPROTO;
 	return 0;
 }
 
-static int i2c_ch341a_usb_write_byte(struct i2c_adapter *adapter, u16 addr, u16 len, u8 *data)
+static int i2c_ch341a_usb_write_bytes(struct i2c_adapter *adapter, u16 addr, u16 len, u8 *data)
 {
-	int ret;
+	int i, ret;
 
 	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, data, len);
 
 	ret = i2c_ch341a_usb_i2c_start(adapter);
-	if (ret) return ret;
+	if (ret != 0) return ret;
 	ret = i2c_ch341a_usb_i2c_write(adapter, addr);
-	if (ret) return ret;
-	ret = i2c_ch341a_usb_i2c_write(adapter, data[0]);
-	if (ret) return ret;
-	if (len == 2)
-		ret = i2c_ch341a_usb_i2c_write(adapter, data[1]);
-	if (ret) return ret;
+	if (ret != 0) return ret;
+
+	for (i=0; i < len; i++) {
+		ret = i2c_ch341a_usb_i2c_write(adapter, data[i]);
+		if (ret != 0) return ret;
+	}
+
 	ret = i2c_ch341a_usb_i2c_stop(adapter);
-	usleep_range(1500, 2000);
+	usleep_range(2000, 20000);
 
 	return ret;
 }
 
-static int i2c_ch341a_usb_i2c_read(struct i2c_adapter *adapter, u16 len, u8 *data)
+static int i2c_ch341a_usb_i2c_read(struct i2c_adapter *adapter, u8 len, u8 *data)
 {
 	struct i2c_ch341a *dev = (struct i2c_ch341a *)adapter->algo_data;
 	u8 I2C_CMD_READ_BYTE[] = {CH341A_CONTROL_I2C, 0, CH341A_I2C_CMD_END};
-	u8 resp[CH341A_I2C_CMD_MAX_LENGTH];
 	int ret, actual;
 
 	I2C_CMD_READ_BYTE[1] = CH341A_I2C_CMD_IN | (u8) len;
 
-	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, I2C_CMD_READ_BYTE, sizeof(I2C_CMD_READ_BYTE));
-
 	ret = usb_bulk_msg(dev->usb_dev, 
 			usb_sndbulkpipe(dev->usb_dev, dev->ep_out),
 			I2C_CMD_READ_BYTE, sizeof(I2C_CMD_READ_BYTE), &actual, TIMEOUT);
-	if (ret) return ret;
+	if (ret != 0) return ret;
 
 	ret = usb_bulk_msg(dev->usb_dev, 
 			usb_rcvbulkpipe(dev->usb_dev, dev->ep_in),
-			&resp, CH341A_I2C_CMD_MAX_LENGTH, &actual, TIMEOUT);
-	if (ret) return ret;
+			dev->in_buf, CH341A_I2C_CMD_MAX_LENGTH, &actual, TIMEOUT);
+	if (ret != 0) return ret;
 
-	memcpy(data, resp, len);
-
-	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, data, len);
+	memcpy(data, dev->in_buf, len);
 
 	return 0;
 }
 
 static int i2c_ch341a_usb_i2c_read_bytes(struct i2c_adapter *adapter, u16 addr, u16 len, u8 *data)
 {
-	int ret;
-	int buf[1] = {0};
+	int ret, i;
+
+	ret = i2c_ch341a_usb_i2c_start(adapter);
+	if (ret != 0) return ret;
+	ret = i2c_ch341a_usb_i2c_write(adapter, addr);
+	if (ret != 0) return ret;
+
+	for (i=0; i < len; i+=32) {
+		u8 to_read = (i+32 <= len) ? 32 : len % 32;
+		ret = i2c_ch341a_usb_i2c_read(adapter, to_read, &data[i]);
+		if (ret != 0) return ret;
+	}
 
 	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, data, len);
 
-	ret = i2c_ch341a_usb_i2c_start(adapter);
-	if (ret) return ret;
-	ret = i2c_ch341a_usb_i2c_write(adapter, addr);
-	if (ret) return ret;
-	ret = i2c_ch341a_usb_i2c_read(adapter, len, data);
-	if (ret) return ret;
 	ret = i2c_ch341a_usb_i2c_stop(adapter);
-	if (ret) return ret;
-	ret = i2c_ch341a_usb_write_byte(adapter, addr, 1, buf);
+	if (ret != 0) return ret;
+	i2c_ch341a_usb_i2c_write(adapter, 0); //should give error so don't check here
 
 	return 0;
 }
@@ -175,14 +171,13 @@ static int i2c_ch341a_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs
 		pmsg = &msgs[i];
 		dev_dbg(&adapter->dev, "%s: (addr=%x, flags=%x, len=%d)", __func__,
 			pmsg->addr, pmsg->flags, pmsg->len);
-		print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, pmsg->buf, pmsg->len);
 		if (pmsg->flags & I2C_M_RD) {
 			if (i2c_ch341a_usb_i2c_read_bytes(adapter,
 				(pmsg->addr<<1) + 1, 
 				pmsg->len, pmsg->buf) != 0)
 					return -EREMOTEIO;
 		} else {
-			if (i2c_ch341a_usb_write_byte(adapter,
+			if (i2c_ch341a_usb_write_bytes(adapter,
 				(pmsg->addr<<1), pmsg->len, pmsg->buf) != 0)
 					return -EREMOTEIO;
 		}
