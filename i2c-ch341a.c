@@ -10,8 +10,6 @@
  * published by the Free Software Foundation, version 2.
  *
  */
- 
-#define DEBUG 1
 
 #include <linux/device.h>
 #include <linux/kernel.h>
@@ -42,6 +40,7 @@ struct i2c_ch341a {
 	struct usb_device *usb_dev;
 	struct usb_interface *interface;
 	struct i2c_adapter adapter;
+	unsigned int clock_speed;
 	int ep_in, ep_out;
 	u8 in_buf[CH341A_I2C_CMD_MAX_LENGTH] ____cacheline_aligned;
 };
@@ -69,6 +68,12 @@ static int i2c_ch341a_usb_i2c_stop(struct i2c_adapter *adapter)
 {
 	u8 I2C_CMD_STOP[] = {CH341A_CONTROL_I2C, CH341A_I2C_CMD_STO, CH341A_I2C_CMD_END};
 	return i2c_ch341a_usb_i2c_command(adapter, I2C_CMD_STOP, sizeof(I2C_CMD_STOP));
+}
+
+static int i2c_ch341a_usb_i2c_set_speed(struct i2c_adapter *adapter, u8 data)
+{
+	u8 I2C_CMD_SET[] = {CH341A_CONTROL_I2C, CH341A_I2C_CMD_SET | data, CH341A_I2C_CMD_END};
+	return i2c_ch341a_usb_i2c_command(adapter, I2C_CMD_SET, sizeof(I2C_CMD_SET));
 }
 
 static int i2c_ch341a_usb_i2c_write(struct i2c_adapter *adapter, u8 data)
@@ -110,7 +115,7 @@ static int i2c_ch341a_usb_write_bytes(struct i2c_adapter *adapter, u16 addr, u16
 	}
 
 	ret = i2c_ch341a_usb_i2c_stop(adapter);
-	usleep_range(2000, 20000);
+	usleep_range(1000, 20000);
 
 	return ret;
 }
@@ -190,6 +195,69 @@ static u32 i2c_ch341a_usb_func(struct i2c_adapter *adapter)
 	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL;
 }
 
+static ssize_t ch341a_attr_clock_store_value(struct device *dev,
+			struct device_attribute *attr,
+			const char *buf, size_t count) {
+
+	struct i2c_adapter *adapter = to_i2c_adapter(dev);
+	struct i2c_ch341a *ch341a_data = (struct i2c_ch341a *)adapter->algo_data;
+	unsigned int value;
+	u8 speed;
+	int ret;
+
+	ret = kstrtouint(buf, 10, &value);
+
+	switch (value) {
+		case 100:
+			speed = 0;
+			break;
+		case 400:
+			speed = 1;
+			break;
+		case 750:
+			speed = 2;
+			break;
+		case 1000:
+			speed = 3;
+			break;
+		default:
+			return -EINVAL;
+	}
+
+	ch341a_data->clock_speed = value;
+	ret = i2c_ch341a_usb_i2c_set_speed(adapter, speed);
+	if (ret != 0) return -EINVAL;
+
+	return count;
+}
+
+static ssize_t ch341a_attr_clock_show_value(struct device *dev,
+				struct device_attribute *attr,
+				char *buf) {
+	struct i2c_adapter *adapter = to_i2c_adapter(dev);
+	struct i2c_ch341a *ch341a_data = (struct i2c_ch341a *)adapter->algo_data;
+	return sprintf(buf, "%d\n", (ch341a_data->clock_speed));
+}
+
+static ssize_t ch341a_attr_clock_show_freqs(struct device *dev,
+				struct device_attribute *attr,
+				char *buf) {
+	return sprintf(buf, "100 400 750 1000\n");
+}
+
+static DEVICE_ATTR(frequency, S_IWUSR | S_IRUGO,
+			ch341a_attr_clock_show_value,
+			ch341a_attr_clock_store_value);
+static DEVICE_ATTR(frequency_available, S_IRUGO,
+		ch341a_attr_clock_show_freqs, NULL);
+
+static struct attribute *ch341a_attrs[] = {
+	&dev_attr_frequency.attr,
+	&dev_attr_frequency_available.attr,
+	NULL
+};
+ATTRIBUTE_GROUPS(ch341a);
+
 static const struct i2c_algorithm usb_algorithm = {
 	.master_xfer	= i2c_ch341a_usb_xfer,
 	.functionality	= i2c_ch341a_usb_func,
@@ -235,6 +303,7 @@ static int i2c_ch341a_probe(struct usb_interface *interface,
 	dev->adapter.class = I2C_CLASS_HWMON;
 	dev->adapter.algo = &usb_algorithm;
 	dev->adapter.algo_data = dev;
+	dev->adapter.dev.groups = ch341a_groups;
 	i2c_set_adapdata(&dev->adapter, dev);
 	snprintf(dev->adapter.name, sizeof(dev->adapter.name),
 		 "i2c-ch341a at bus %03d device %03d",
@@ -246,6 +315,10 @@ static int i2c_ch341a_probe(struct usb_interface *interface,
 	if (ret < 0) {
 		goto error;
 	}
+
+	dev->clock_speed = 100;
+	ret = i2c_ch341a_usb_i2c_set_speed(&dev->adapter, 0);
+	if (ret != 0) return ret;
 
 	dev_info(&dev->adapter.dev, "connected i2c-ch341a device\n");
 
