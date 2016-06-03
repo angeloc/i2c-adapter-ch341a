@@ -36,16 +36,20 @@
 #define CH341A_I2C_CMD_DLY        0x0f
 #define CH341A_I2C_CMD_END        0x00
 
+#define SEND_PAYLOAD_LENGTH       29
+#define RECV_PAYLOAD_LENGTH       32
+
 struct i2c_ch341a {
+	u8 in_buf[CH341A_I2C_CMD_MAX_LENGTH];
+	u8 out_buf[CH341A_I2C_CMD_MAX_LENGTH];
 	struct usb_device *usb_dev;
 	struct usb_interface *interface;
 	struct i2c_adapter adapter;
 	unsigned int clock_speed;
 	int ep_in, ep_out;
-	u8 in_buf[CH341A_I2C_CMD_MAX_LENGTH] ____cacheline_aligned;
 };
 
-static int i2c_ch341a_usb_i2c_command(struct i2c_adapter *adapter, u8 *cmd, u8 len)
+static int ch341a_usb_i2c_command(struct i2c_adapter *adapter, u8 *cmd, u8 len)
 {
 	struct i2c_ch341a *dev = (struct i2c_ch341a *)adapter->algo_data;
 	int sent, ret;
@@ -58,69 +62,77 @@ static int i2c_ch341a_usb_i2c_command(struct i2c_adapter *adapter, u8 *cmd, u8 l
 	return 0;
 }
 
-static int i2c_ch341a_usb_i2c_start(struct i2c_adapter *adapter)
+static int ch341a_usb_i2c_start(struct i2c_adapter *adapter)
 {
 	u8 I2C_CMD_START[] = {CH341A_CONTROL_I2C, CH341A_I2C_CMD_STA, CH341A_I2C_CMD_END};
-	return i2c_ch341a_usb_i2c_command(adapter, I2C_CMD_START, sizeof(I2C_CMD_START));
+	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, I2C_CMD_START, sizeof(I2C_CMD_START));
+	return ch341a_usb_i2c_command(adapter, I2C_CMD_START, sizeof(I2C_CMD_START));
 }
 
-static int i2c_ch341a_usb_i2c_stop(struct i2c_adapter *adapter)
+static int ch341a_usb_i2c_stop(struct i2c_adapter *adapter)
 {
 	u8 I2C_CMD_STOP[] = {CH341A_CONTROL_I2C, CH341A_I2C_CMD_STO, CH341A_I2C_CMD_END};
-	return i2c_ch341a_usb_i2c_command(adapter, I2C_CMD_STOP, sizeof(I2C_CMD_STOP));
+	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, I2C_CMD_STOP, sizeof(I2C_CMD_STOP));
+	return ch341a_usb_i2c_command(adapter, I2C_CMD_STOP, sizeof(I2C_CMD_STOP));
 }
 
-static int i2c_ch341a_usb_i2c_set_speed(struct i2c_adapter *adapter, u8 data)
+static int ch341a_usb_i2c_set_speed(struct i2c_adapter *adapter, u8 data)
 {
 	u8 I2C_CMD_SET[] = {CH341A_CONTROL_I2C, CH341A_I2C_CMD_SET | data, CH341A_I2C_CMD_END};
-	return i2c_ch341a_usb_i2c_command(adapter, I2C_CMD_SET, sizeof(I2C_CMD_SET));
+	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, I2C_CMD_SET, sizeof(I2C_CMD_SET));
+	return ch341a_usb_i2c_command(adapter, I2C_CMD_SET, sizeof(I2C_CMD_SET));
 }
 
-static int i2c_ch341a_usb_i2c_write(struct i2c_adapter *adapter, u8 data)
+static int ch341a_usb_i2c_write(struct i2c_adapter *adapter, u8 len, u8 *data)
 {
 	struct i2c_ch341a *dev = (struct i2c_ch341a *)adapter->algo_data;
-	u8 I2C_CMD_WRITE_BYTE[] = {CH341A_CONTROL_I2C, CH341A_I2C_CMD_OUT, 0, CH341A_I2C_CMD_END};
 	int ret, actual;
 
-	I2C_CMD_WRITE_BYTE[2] = data;
+	dev->out_buf[0] = CH341A_CONTROL_I2C;
+	dev->out_buf[1] = CH341A_I2C_CMD_OUT | len;
+	memcpy(&dev->out_buf[2], data, len);
+	dev->out_buf[2+len] = CH341A_I2C_CMD_END;
+
+	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, dev->out_buf, len+3);
 
 	ret = usb_bulk_msg(dev->usb_dev, 
-			usb_sndbulkpipe(dev->usb_dev, dev->ep_out),
-			I2C_CMD_WRITE_BYTE, sizeof(I2C_CMD_WRITE_BYTE), &actual, TIMEOUT);
+		usb_sndbulkpipe(dev->usb_dev, dev->ep_out),
+		dev->out_buf, len+3, &actual, TIMEOUT);
 	if (ret != 0) return ret;
 
-	ret = usb_bulk_msg(dev->usb_dev, 
-			usb_rcvbulkpipe(dev->usb_dev, dev->ep_in),
-			dev->in_buf, CH341A_I2C_CMD_MAX_LENGTH, &actual, TIMEOUT);
-	if (ret != 0) return ret;
-
-	if (dev->in_buf[0] & 0x80) return -EPROTO;
 	return 0;
 }
 
-static int i2c_ch341a_usb_write_bytes(struct i2c_adapter *adapter, u16 addr, u16 len, u8 *data)
+static int ch341a_usb_write_bytes(struct i2c_adapter *adapter, u8 addr, u16 len, u8 *data)
 {
 	int i, ret;
 
-	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, data, len);
-
-	ret = i2c_ch341a_usb_i2c_start(adapter);
-	if (ret != 0) return ret;
-	ret = i2c_ch341a_usb_i2c_write(adapter, addr);
+	ret = ch341a_usb_i2c_start(adapter);
 	if (ret != 0) return ret;
 
-	for (i=0; i < len; i++) {
-		ret = i2c_ch341a_usb_i2c_write(adapter, data[i]);
+	ret = ch341a_usb_i2c_write(adapter, 1, &addr);
+	if (ret != 0) return ret;
+
+	for (i=0; i < len/SEND_PAYLOAD_LENGTH; i++) {
+		ret = ch341a_usb_i2c_write(adapter, 
+			SEND_PAYLOAD_LENGTH, 
+			&data[i*SEND_PAYLOAD_LENGTH]);
+		if (ret != 0) return ret;
+	}
+	if ( len % SEND_PAYLOAD_LENGTH ) {
+		ret = ch341a_usb_i2c_write(adapter, 
+			len-(SEND_PAYLOAD_LENGTH*i), 
+			&data[i*SEND_PAYLOAD_LENGTH]);
 		if (ret != 0) return ret;
 	}
 
-	ret = i2c_ch341a_usb_i2c_stop(adapter);
-	usleep_range(1000, 20000);
+	ret = ch341a_usb_i2c_stop(adapter);
+	usleep_range(2000, 10000);
 
 	return ret;
 }
 
-static int i2c_ch341a_usb_i2c_read(struct i2c_adapter *adapter, u8 len, u8 *data)
+static int ch341a_usb_i2c_read(struct i2c_adapter *adapter, u8 len, u8 *data)
 {
 	struct i2c_ch341a *dev = (struct i2c_ch341a *)adapter->algo_data;
 	u8 I2C_CMD_READ_BYTE[] = {CH341A_CONTROL_I2C, 0, CH341A_I2C_CMD_END};
@@ -135,7 +147,7 @@ static int i2c_ch341a_usb_i2c_read(struct i2c_adapter *adapter, u8 len, u8 *data
 
 	ret = usb_bulk_msg(dev->usb_dev, 
 			usb_rcvbulkpipe(dev->usb_dev, dev->ep_in),
-			dev->in_buf, CH341A_I2C_CMD_MAX_LENGTH, &actual, TIMEOUT);
+			dev->in_buf, RECV_PAYLOAD_LENGTH, &actual, TIMEOUT);
 	if (ret != 0) return ret;
 
 	memcpy(data, dev->in_buf, len);
@@ -143,31 +155,38 @@ static int i2c_ch341a_usb_i2c_read(struct i2c_adapter *adapter, u8 len, u8 *data
 	return 0;
 }
 
-static int i2c_ch341a_usb_i2c_read_bytes(struct i2c_adapter *adapter, u16 addr, u16 len, u8 *data)
+static int ch341a_usb_i2c_read_bytes(struct i2c_adapter *adapter, u8 addr, u16 len, u8 *data)
 {
 	int ret, i;
 
-	ret = i2c_ch341a_usb_i2c_start(adapter);
+	ret = ch341a_usb_i2c_start(adapter);
 	if (ret != 0) return ret;
-	ret = i2c_ch341a_usb_i2c_write(adapter, addr);
+	ret = ch341a_usb_i2c_write(adapter, 1, &addr);
 	if (ret != 0) return ret;
 
-	for (i=0; i < len; i+=32) {
-		u8 to_read = (i+32 <= len) ? 32 : len % 32;
-		ret = i2c_ch341a_usb_i2c_read(adapter, to_read, &data[i]);
+	for (i=0; i < len/RECV_PAYLOAD_LENGTH; i++) {
+		ret = ch341a_usb_i2c_read(adapter, 
+			RECV_PAYLOAD_LENGTH, 
+			&data[i*RECV_PAYLOAD_LENGTH]);
+		if (ret != 0) return ret;
+	}
+	if ( len % RECV_PAYLOAD_LENGTH ) {
+		ret = ch341a_usb_i2c_read(adapter, 
+			len-(RECV_PAYLOAD_LENGTH*i), 
+			&data[i*RECV_PAYLOAD_LENGTH]);
 		if (ret != 0) return ret;
 	}
 
 	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, data, len);
 
-	ret = i2c_ch341a_usb_i2c_stop(adapter);
+	ret = ch341a_usb_i2c_stop(adapter);
 	if (ret != 0) return ret;
-	i2c_ch341a_usb_i2c_write(adapter, 0); //should give error so don't check here
+	ch341a_usb_i2c_write(adapter, 1, &addr); //should give error so don't check here
 
 	return 0;
 }
 
-static int i2c_ch341a_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, int num)
+static int ch341a_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, int num)
 {
 	struct i2c_msg *pmsg;
 	int i;
@@ -177,12 +196,12 @@ static int i2c_ch341a_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs
 		dev_dbg(&adapter->dev, "%s: (addr=%x, flags=%x, len=%d)", __func__,
 			pmsg->addr, pmsg->flags, pmsg->len);
 		if (pmsg->flags & I2C_M_RD) {
-			if (i2c_ch341a_usb_i2c_read_bytes(adapter,
+			if (ch341a_usb_i2c_read_bytes(adapter,
 				(pmsg->addr<<1) + 1, 
 				pmsg->len, pmsg->buf) != 0)
 					return -EREMOTEIO;
 		} else {
-			if (i2c_ch341a_usb_write_bytes(adapter,
+			if (ch341a_usb_write_bytes(adapter,
 				(pmsg->addr<<1), pmsg->len, pmsg->buf) != 0)
 					return -EREMOTEIO;
 		}
@@ -190,7 +209,7 @@ static int i2c_ch341a_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs
 	return i;
 }
 
-static u32 i2c_ch341a_usb_func(struct i2c_adapter *adapter)
+static u32 ch341a_usb_func(struct i2c_adapter *adapter)
 {
 	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL;
 }
@@ -225,7 +244,7 @@ static ssize_t ch341a_attr_clock_store_value(struct device *dev,
 	}
 
 	ch341a_data->clock_speed = value;
-	ret = i2c_ch341a_usb_i2c_set_speed(adapter, speed);
+	ret = ch341a_usb_i2c_set_speed(adapter, speed);
 	if (ret != 0) return -EINVAL;
 
 	return count;
@@ -259,24 +278,24 @@ static struct attribute *ch341a_attrs[] = {
 ATTRIBUTE_GROUPS(ch341a);
 
 static const struct i2c_algorithm usb_algorithm = {
-	.master_xfer	= i2c_ch341a_usb_xfer,
-	.functionality	= i2c_ch341a_usb_func,
+	.master_xfer	= ch341a_usb_xfer,
+	.functionality	= ch341a_usb_func,
 };
 
-static const struct usb_device_id i2c_ch341a_table[] = {
+static const struct usb_device_id ch341a_table[] = {
 	{ USB_DEVICE(0x1a86, 0x5512) },
 	{ }
 };
 
-MODULE_DEVICE_TABLE(usb, i2c_ch341a_table);
+MODULE_DEVICE_TABLE(usb, ch341a_table);
 
-static void i2c_ch341a_free(struct i2c_ch341a *dev)
+static void ch341a_free(struct i2c_ch341a *dev)
 {
 	usb_put_dev(dev->usb_dev);
 	kfree(dev);
 }
 
-static int i2c_ch341a_probe(struct usb_interface *interface,
+static int ch341a_probe(struct usb_interface *interface,
 			const struct usb_device_id *id)
 {
 	struct usb_host_interface *hostif = interface->cur_altsetting;
@@ -317,7 +336,7 @@ static int i2c_ch341a_probe(struct usb_interface *interface,
 	}
 
 	dev->clock_speed = 100;
-	ret = i2c_ch341a_usb_i2c_set_speed(&dev->adapter, 0);
+	ret = ch341a_usb_i2c_set_speed(&dev->adapter, 0);
 	if (ret != 0) return ret;
 
 	dev_info(&dev->adapter.dev, "connected i2c-ch341a device\n");
@@ -327,30 +346,30 @@ static int i2c_ch341a_probe(struct usb_interface *interface,
  error:
 	if (dev)
 		usb_set_intfdata(interface, NULL);
-		i2c_ch341a_free(dev);
+		ch341a_free(dev);
 
 	return ret;
 }
 
-static void i2c_ch341a_disconnect(struct usb_interface *interface)
+static void ch341a_disconnect(struct usb_interface *interface)
 {
 	struct i2c_ch341a *dev = usb_get_intfdata(interface);
 
 	i2c_del_adapter(&dev->adapter);
 	usb_set_intfdata(interface, NULL);
-	i2c_ch341a_free(dev);
+	ch341a_free(dev);
 
 	dev_dbg(&interface->dev, "disconnected\n");
 }
 
-static struct usb_driver i2c_ch341a_driver = {
+static struct usb_driver ch341a_driver = {
 	.name		= "i2c-ch341a",
-	.probe		= i2c_ch341a_probe,
-	.disconnect	= i2c_ch341a_disconnect,
-	.id_table	= i2c_ch341a_table,
+	.probe		= ch341a_probe,
+	.disconnect	= ch341a_disconnect,
+	.id_table	= ch341a_table,
 };
 
-module_usb_driver(i2c_ch341a_driver);
+module_usb_driver(ch341a_driver);
 
 MODULE_AUTHOR("Angelo Compagnucci <angelo.compagnucci@gmail.com>");
 MODULE_DESCRIPTION("i2c-ch341a driver");
