@@ -1,7 +1,7 @@
 /*
  * driver for the ch341a usb to i2c chip
- * 
- * Datasheet: 
+ *
+ * Datasheet: http://www.winchiphead.com/download/CH341/CH341DS1.PDF
  *
  * Copyright (C) 2016 Angelo Compagnucci <angelo.compagnucci@gmail.com>
  *
@@ -95,7 +95,7 @@ static int ch341a_usb_i2c_write(struct i2c_adapter *adapter, u8 len, u8 *data)
 
 	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, dev->out_buf, len+3);
 
-	ret = usb_bulk_msg(dev->usb_dev, 
+	ret = usb_bulk_msg(dev->usb_dev,
 		usb_sndbulkpipe(dev->usb_dev, dev->ep_out),
 		dev->out_buf, len+3, &actual, TIMEOUT);
 	if (ret != 0) return ret;
@@ -114,14 +114,14 @@ static int ch341a_usb_write_bytes(struct i2c_adapter *adapter, u8 addr, u16 len,
 	if (ret != 0) return ret;
 
 	for (i=0; i < len/SEND_PAYLOAD_LENGTH; i++) {
-		ret = ch341a_usb_i2c_write(adapter, 
-			SEND_PAYLOAD_LENGTH, 
+		ret = ch341a_usb_i2c_write(adapter,
+			SEND_PAYLOAD_LENGTH,
 			&data[i*SEND_PAYLOAD_LENGTH]);
 		if (ret != 0) return ret;
 	}
 	if ( len % SEND_PAYLOAD_LENGTH ) {
-		ret = ch341a_usb_i2c_write(adapter, 
-			len-(SEND_PAYLOAD_LENGTH*i), 
+		ret = ch341a_usb_i2c_write(adapter,
+			len-(SEND_PAYLOAD_LENGTH*i),
 			&data[i*SEND_PAYLOAD_LENGTH]);
 		if (ret != 0) return ret;
 	}
@@ -140,12 +140,12 @@ static int ch341a_usb_i2c_read(struct i2c_adapter *adapter, u8 len, u8 *data)
 
 	I2C_CMD_READ_BYTE[1] = CH341A_I2C_CMD_IN | (u8) len;
 
-	ret = usb_bulk_msg(dev->usb_dev, 
+	ret = usb_bulk_msg(dev->usb_dev,
 			usb_sndbulkpipe(dev->usb_dev, dev->ep_out),
 			I2C_CMD_READ_BYTE, sizeof(I2C_CMD_READ_BYTE), &actual, TIMEOUT);
 	if (ret != 0) return ret;
 
-	ret = usb_bulk_msg(dev->usb_dev, 
+	ret = usb_bulk_msg(dev->usb_dev,
 			usb_rcvbulkpipe(dev->usb_dev, dev->ep_in),
 			dev->in_buf, RECV_PAYLOAD_LENGTH, &actual, TIMEOUT);
 	if (ret != 0) return ret;
@@ -165,14 +165,14 @@ static int ch341a_usb_i2c_read_bytes(struct i2c_adapter *adapter, u8 addr, u16 l
 	if (ret != 0) return ret;
 
 	for (i=0; i < len/RECV_PAYLOAD_LENGTH; i++) {
-		ret = ch341a_usb_i2c_read(adapter, 
-			RECV_PAYLOAD_LENGTH, 
+		ret = ch341a_usb_i2c_read(adapter,
+			RECV_PAYLOAD_LENGTH,
 			&data[i*RECV_PAYLOAD_LENGTH]);
 		if (ret != 0) return ret;
 	}
 	if ( len % RECV_PAYLOAD_LENGTH ) {
-		ret = ch341a_usb_i2c_read(adapter, 
-			len-(RECV_PAYLOAD_LENGTH*i), 
+		ret = ch341a_usb_i2c_read(adapter,
+			len-(RECV_PAYLOAD_LENGTH*i),
 			&data[i*RECV_PAYLOAD_LENGTH]);
 		if (ret != 0) return ret;
 	}
@@ -197,7 +197,7 @@ static int ch341a_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, in
 			pmsg->addr, pmsg->flags, pmsg->len);
 		if (pmsg->flags & I2C_M_RD) {
 			if (ch341a_usb_i2c_read_bytes(adapter,
-				(pmsg->addr<<1) + 1, 
+				(pmsg->addr<<1) + 1,
 				pmsg->len, pmsg->buf) != 0)
 					return -EREMOTEIO;
 		} else {
