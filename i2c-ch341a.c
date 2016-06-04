@@ -362,6 +362,14 @@ static void ch341a_disconnect(struct usb_interface *interface)
 	dev_dbg(&interface->dev, "disconnected\n");
 }
 
+#ifdef CONFIG_OF
+static const struct of_device_id ch341a_of_match[] = {
+	{ .compatible = "ch341a" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, ch341a_of_match);
+#endif
+
 static struct usb_driver ch341a_driver = {
 	.name		= "i2c-ch341a",
 	.probe		= ch341a_probe,
