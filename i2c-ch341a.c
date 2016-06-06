@@ -1,5 +1,5 @@
 /*
- * driver for the ch341a usb to i2c chip
+ * Driver for the Winchiphead CH341A USB to I2C chip
  *
  * Datasheet: http://www.winchiphead.com/download/CH341/CH341DS1.PDF
  *
@@ -20,6 +20,7 @@
 #include <linux/usb.h>
 #include <linux/i2c.h>
 #include <linux/string.h>
+#include <linux/platform_device.h>
 
 #define TIMEOUT 1000
 
@@ -76,9 +77,33 @@ static int ch341a_usb_i2c_stop(struct i2c_adapter *adapter)
 	return ch341a_usb_i2c_command(adapter, I2C_CMD_STOP, sizeof(I2C_CMD_STOP));
 }
 
-static int ch341a_usb_i2c_set_speed(struct i2c_adapter *adapter, u8 data)
+static int ch341a_usb_i2c_set_speed(struct i2c_adapter *adapter, unsigned int data)
 {
-	u8 I2C_CMD_SET[] = {CH341A_CONTROL_I2C, CH341A_I2C_CMD_SET | data, CH341A_I2C_CMD_END};
+	struct i2c_ch341a *ch341a_data = (struct i2c_ch341a *)adapter->algo_data;
+	u8 I2C_CMD_SET[] = {CH341A_CONTROL_I2C, CH341A_I2C_CMD_SET , CH341A_I2C_CMD_END};
+	u8 speed;
+
+	switch (data) {
+		case 100:
+			speed = 0;
+			break;
+		case 400:
+			speed = 1;
+			break;
+		case 750:
+			speed = 2;
+			break;
+		case 1000:
+			speed = 3;
+			break;
+		default:
+			return -EINVAL;
+	}
+
+	ch341a_data->clock_speed = data;
+
+	I2C_CMD_SET[1] |= speed;
+
 	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, I2C_CMD_SET, sizeof(I2C_CMD_SET));
 	return ch341a_usb_i2c_command(adapter, I2C_CMD_SET, sizeof(I2C_CMD_SET));
 }
@@ -127,7 +152,7 @@ static int ch341a_usb_write_bytes(struct i2c_adapter *adapter, u8 addr, u16 len,
 	}
 
 	ret = ch341a_usb_i2c_stop(adapter);
-	usleep_range(2000, 10000);
+	usleep_range(2000, 2000);
 
 	return ret;
 }
@@ -219,32 +244,12 @@ static ssize_t ch341a_attr_clock_store_value(struct device *dev,
 			const char *buf, size_t count) {
 
 	struct i2c_adapter *adapter = to_i2c_adapter(dev);
-	struct i2c_ch341a *ch341a_data = (struct i2c_ch341a *)adapter->algo_data;
 	unsigned int value;
-	u8 speed;
 	int ret;
 
 	ret = kstrtouint(buf, 10, &value);
 
-	switch (value) {
-		case 100:
-			speed = 0;
-			break;
-		case 400:
-			speed = 1;
-			break;
-		case 750:
-			speed = 2;
-			break;
-		case 1000:
-			speed = 3;
-			break;
-		default:
-			return -EINVAL;
-	}
-
-	ch341a_data->clock_speed = value;
-	ret = ch341a_usb_i2c_set_speed(adapter, speed);
+	ret = ch341a_usb_i2c_set_speed(adapter, value);
 	if (ret != 0) return -EINVAL;
 
 	return count;
@@ -264,15 +269,15 @@ static ssize_t ch341a_attr_clock_show_freqs(struct device *dev,
 	return sprintf(buf, "100 400 750 1000\n");
 }
 
-static DEVICE_ATTR(frequency, S_IWUSR | S_IRUGO,
+static DEVICE_ATTR(clock_frequency, S_IWUSR | S_IRUGO,
 			ch341a_attr_clock_show_value,
 			ch341a_attr_clock_store_value);
-static DEVICE_ATTR(frequency_available, S_IRUGO,
+static DEVICE_ATTR(clock_frequency_available, S_IRUGO,
 		ch341a_attr_clock_show_freqs, NULL);
 
 static struct attribute *ch341a_attrs[] = {
-	&dev_attr_frequency.attr,
-	&dev_attr_frequency_available.attr,
+	&dev_attr_clock_frequency.attr,
+	&dev_attr_clock_frequency_available.attr,
 	NULL
 };
 ATTRIBUTE_GROUPS(ch341a);
@@ -335,8 +340,7 @@ static int ch341a_probe(struct usb_interface *interface,
 		goto error;
 	}
 
-	dev->clock_speed = 100;
-	ret = ch341a_usb_i2c_set_speed(&dev->adapter, 0);
+	ret = ch341a_usb_i2c_set_speed(&dev->adapter, 100);
 	if (ret != 0) return ret;
 
 	dev_info(&dev->adapter.dev, "connected i2c-ch341a device\n");
