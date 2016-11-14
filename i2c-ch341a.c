@@ -77,6 +77,13 @@ static int ch341a_usb_i2c_stop(struct i2c_adapter *adapter)
 	return ch341a_usb_i2c_command(adapter, I2C_CMD_STOP, sizeof(I2C_CMD_STOP));
 }
 
+static int ch341a_usb_i2c_delay(struct i2c_adapter *adapter)
+{
+	u8 I2C_CMD_DELAY[] = {CH341A_CONTROL_I2C, CH341A_I2C_CMD_MS, CH341A_I2C_CMD_END};
+	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, I2C_CMD_DELAY, sizeof(I2C_CMD_DELAY));
+	return ch341a_usb_i2c_command(adapter, I2C_CMD_DELAY, sizeof(I2C_CMD_DELAY));
+}
+
 static int ch341a_usb_i2c_set_speed(struct i2c_adapter *adapter, unsigned int data)
 {
 	struct i2c_ch341a *ch341a_data = (struct i2c_ch341a *)adapter->algo_data;
@@ -138,10 +145,12 @@ static int ch341a_usb_write_bytes(struct i2c_adapter *adapter, u8 addr, u16 len,
 	ret = ch341a_usb_i2c_write(adapter, 1, &addr);
 	if (ret != 0) return ret;
 
-	for (i=0; i < len/SEND_PAYLOAD_LENGTH; i++) {
+	for ( i=0; i < len/SEND_PAYLOAD_LENGTH; i++ ) {
 		ret = ch341a_usb_i2c_write(adapter,
 			SEND_PAYLOAD_LENGTH,
 			&data[i*SEND_PAYLOAD_LENGTH]);
+		if (ret != 0) return ret;
+		ret = ch341a_usb_i2c_delay(adapter);
 		if (ret != 0) return ret;
 	}
 	if ( len % SEND_PAYLOAD_LENGTH ) {
@@ -149,10 +158,14 @@ static int ch341a_usb_write_bytes(struct i2c_adapter *adapter, u8 addr, u16 len,
 			len-(SEND_PAYLOAD_LENGTH*i),
 			&data[i*SEND_PAYLOAD_LENGTH]);
 		if (ret != 0) return ret;
+		ret = ch341a_usb_i2c_delay(adapter);
+		if (ret != 0) return ret;
 	}
 
 	ret = ch341a_usb_i2c_stop(adapter);
-	usleep_range(2000, 2000);
+
+	ret = ch341a_usb_i2c_delay(adapter);
+	if (ret != 0) return ret;
 
 	return ret;
 }
