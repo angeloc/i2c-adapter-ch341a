@@ -11,6 +11,8 @@
  *
  */
 
+#define DEBUG 1
+
 #include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -22,7 +24,7 @@
 #include <linux/string.h>
 #include <linux/platform_device.h>
 
-#define TIMEOUT 1000
+#define TIMEOUT 500
 
 #define CH341A_CONTROL_I2C        0xAA
 
@@ -137,7 +139,7 @@ static int ch341a_usb_i2c_write(struct i2c_adapter *adapter, u8 len, u8 *data)
 
 static int ch341a_usb_write_bytes(struct i2c_adapter *adapter, u8 addr, u16 len, u8 *data)
 {
-	int i, ret;
+	int i, ret = 0;
 
 	ret = ch341a_usb_i2c_start(adapter);
 	if (ret != 0) return ret;
@@ -145,21 +147,14 @@ static int ch341a_usb_write_bytes(struct i2c_adapter *adapter, u8 addr, u16 len,
 	ret = ch341a_usb_i2c_write(adapter, 1, &addr);
 	if (ret != 0) return ret;
 
-	for ( i=0; i < len/SEND_PAYLOAD_LENGTH; i++ ) {
+	while (i < len) {
 		ret = ch341a_usb_i2c_write(adapter,
-			SEND_PAYLOAD_LENGTH,
-			&data[i*SEND_PAYLOAD_LENGTH]);
+			len-i >= SEND_PAYLOAD_LENGTH ? SEND_PAYLOAD_LENGTH : len-i,
+			&data[i]);
 		if (ret != 0) return ret;
 		ret = ch341a_usb_i2c_delay(adapter);
 		if (ret != 0) return ret;
-	}
-	if ( len % SEND_PAYLOAD_LENGTH ) {
-		ret = ch341a_usb_i2c_write(adapter,
-			len-(SEND_PAYLOAD_LENGTH*i),
-			&data[i*SEND_PAYLOAD_LENGTH]);
-		if (ret != 0) return ret;
-		ret = ch341a_usb_i2c_delay(adapter);
-		if (ret != 0) return ret;
+		i += SEND_PAYLOAD_LENGTH;
 	}
 
 	ret = ch341a_usb_i2c_stop(adapter);
@@ -195,24 +190,19 @@ static int ch341a_usb_i2c_read(struct i2c_adapter *adapter, u8 len, u8 *data)
 
 static int ch341a_usb_i2c_read_bytes(struct i2c_adapter *adapter, u8 addr, u16 len, u8 *data)
 {
-	int ret, i;
+	int i, ret= 0;
 
 	ret = ch341a_usb_i2c_start(adapter);
 	if (ret != 0) return ret;
 	ret = ch341a_usb_i2c_write(adapter, 1, &addr);
 	if (ret != 0) return ret;
 
-	for (i=0; i < len/RECV_PAYLOAD_LENGTH; i++) {
+	while (i < len) {
 		ret = ch341a_usb_i2c_read(adapter,
-			RECV_PAYLOAD_LENGTH,
-			&data[i*RECV_PAYLOAD_LENGTH]);
+			len-i >= RECV_PAYLOAD_LENGTH ? RECV_PAYLOAD_LENGTH : len-i,
+			&data[i]);
 		if (ret != 0) return ret;
-	}
-	if ( len % RECV_PAYLOAD_LENGTH ) {
-		ret = ch341a_usb_i2c_read(adapter,
-			len-(RECV_PAYLOAD_LENGTH*i),
-			&data[i*RECV_PAYLOAD_LENGTH]);
-		if (ret != 0) return ret;
+		i += RECV_PAYLOAD_LENGTH;
 	}
 
 	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, data, len);
