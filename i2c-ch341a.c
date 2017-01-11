@@ -147,14 +147,15 @@ static int ch341a_usb_write_bytes(struct i2c_adapter *adapter, u8 addr, u16 len,
 	ret = ch341a_usb_i2c_write(adapter, 1, &addr);
 	if (ret != 0) return ret;
 
-	while (i < len) {
+	for (i = 0; i < len; i += SEND_PAYLOAD_LENGTH) {
 		ret = ch341a_usb_i2c_write(adapter,
 			len-i >= SEND_PAYLOAD_LENGTH ? SEND_PAYLOAD_LENGTH : len-i,
 			&data[i]);
 		if (ret != 0) return ret;
-		ret = ch341a_usb_i2c_delay(adapter);
-		if (ret != 0) return ret;
-		i += SEND_PAYLOAD_LENGTH;
+		if (i + SEND_PAYLOAD_LENGTH < len) {
+			ret = ch341a_usb_i2c_delay(adapter);
+			if (ret != 0) return ret;
+		}
 	}
 
 	ret = ch341a_usb_i2c_stop(adapter);
@@ -195,12 +196,11 @@ static int ch341a_usb_i2c_read_bytes(struct i2c_adapter *adapter, u8 addr, u16 l
 	ret = ch341a_usb_i2c_write(adapter, 1, &addr);
 	if (ret != 0) return ret;
 
-	while (i < len) {
+	for (i = 0; i < len; i += RECV_PAYLOAD_LENGTH) {
 		ret = ch341a_usb_i2c_read(adapter,
 			len-i >= RECV_PAYLOAD_LENGTH ? RECV_PAYLOAD_LENGTH : len-i,
 			&data[i]);
 		if (ret != 0) return ret;
-		i += RECV_PAYLOAD_LENGTH;
 	}
 
 	print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET, data, len);
@@ -239,7 +239,6 @@ static u32 ch341a_usb_func(struct i2c_adapter *adapter)
 {
 	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL;
 }
-
 static ssize_t ch341a_attr_clock_store_value(struct device *dev,
 			struct device_attribute *attr,
 			const char *buf, size_t count) {
