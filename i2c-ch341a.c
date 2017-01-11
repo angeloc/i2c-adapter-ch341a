@@ -139,7 +139,7 @@ static int ch341a_usb_i2c_write(struct i2c_adapter *adapter, u8 len, u8 *data)
 
 static int ch341a_usb_write_bytes(struct i2c_adapter *adapter, u8 addr, u16 len, u8 *data)
 {
-	int i, ret = 0;
+	int i = 0, ret;
 
 	ret = ch341a_usb_i2c_start(adapter);
 	if (ret != 0) return ret;
@@ -158,10 +158,8 @@ static int ch341a_usb_write_bytes(struct i2c_adapter *adapter, u8 addr, u16 len,
 	}
 
 	ret = ch341a_usb_i2c_stop(adapter);
-
-	ret = ch341a_usb_i2c_delay(adapter);
 	if (ret != 0) return ret;
-
+	ret = ch341a_usb_i2c_delay(adapter);
 	return ret;
 }
 
@@ -190,7 +188,7 @@ static int ch341a_usb_i2c_read(struct i2c_adapter *adapter, u8 len, u8 *data)
 
 static int ch341a_usb_i2c_read_bytes(struct i2c_adapter *adapter, u8 addr, u16 len, u8 *data)
 {
-	int i, ret= 0;
+	int i = 0, ret;
 
 	ret = ch341a_usb_i2c_start(adapter);
 	if (ret != 0) return ret;
